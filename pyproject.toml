@@ -1,0 +1,13 @@
+[project]
+name = "lan-share"
+version = "0.1.0"
+description = "A local LAN file transfer and chat server."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jinja2>=3.1.6",
+    "litestar>=2.19.0",
+    "loguru>=0.7.3",
+    "qrcode>=8.2",
+    "uvicorn>=0.40.0",
+]
