@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any, AsyncGenerator
 from loguru import logger
 from datetime import datetime
+from pathlib import Path
 
 from litestar import Litestar, get, post
 from litestar.contrib.jinja import JinjaTemplateEngine
@@ -23,6 +24,8 @@ from utils import get_host_ip, show_qrcode, size_convert
 # Configuration
 UPLOAD_FOLDER = tempfile.gettempdir()
 DOWNLOAD_DIR = os.path.expanduser("~/Downloads")
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 
 # Connection Manager (SSE)
 class BroadcastManager:
@@ -34,7 +37,7 @@ class BroadcastManager:
         existing_names = {c['name'] for c in self.connections}
         if base_name not in existing_names:
             return base_name
-        
+
         counter = 1
         while True:
             new_name = f"{base_name}-{counter}"
@@ -51,21 +54,21 @@ class BroadcastManager:
     async def subscribe(self, name: str = "Unknown") -> AsyncGenerator[Dict[str, Any], None]:
         queue = asyncio.Queue()
         unique_name = self._get_unique_name(name)
-        
+
         connection_info = {'queue': queue, 'name': unique_name}
         self.connections.append(connection_info)
-        
+
         # Notify count update
         await self.broadcast_user_count()
-        
+
         # Send welcome message with assigned name
         yield {'data': json.dumps({'type': 'welcome', 'assigned_name': unique_name})}
-        
+
         # Send history upon connection
         if self.history:
             # Yield history as a single event containing the list
             yield {'data': json.dumps({'type': 'history', 'messages': self.history})}
-            
+
         try:
             while True:
                 message = await queue.get()
@@ -80,7 +83,7 @@ class BroadcastManager:
         self.history.append(message)
         if len(self.history) > 100:
             self.history.pop(0)
-            
+
         for conn in self.connections:
             await conn['queue'].put(message)
 
@@ -120,7 +123,7 @@ class UploadForm:
 @post("/upload")
 async def upload_file(data: UploadForm = Body(media_type=RequestEncodingType.MULTI_PART)) -> Dict[str, Any]:
     uploaded_files = []
-    
+
     # Create a unique directory for this upload batch
     unique_subfolder = str(uuid.uuid4())
     subfolder_path = os.path.join(UPLOAD_FOLDER, unique_subfolder)
@@ -128,20 +131,20 @@ async def upload_file(data: UploadForm = Body(media_type=RequestEncodingType.MUL
 
     for file in data.files:
         filename = file.filename
-        
+
         # Save file to the unique subfolder
         save_path = os.path.join(subfolder_path, filename)
-            
+
         with open(save_path, "wb") as f:
             while True:
                 chunk = await file.read(1024 * 1024 * 64) # Read in 64MB chunks
                 if not chunk:
                     break
                 f.write(chunk)
-        
+
         logger.info(f"File saved to: {save_path}")
         uploaded_files.append(filename)
-        
+
         # Broadcast via SSE
         await manager.publish({
             'type': 'file',
@@ -174,7 +177,7 @@ async def browse_files() -> Template:
             if os.path.isfile(full_path) and not f.startswith('.'):
                 size = os.path.getsize(full_path)
                 _, ext = os.path.splitext(f)
-                
+
                 if ext:
                     # Remove dot, upper case, take first 4 chars
                     ext_display = ext[1:].upper()[:4]
@@ -201,17 +204,17 @@ async def user_download_file(filename: str) -> File:
 
 @get("/favicon.ico")
 async def favicon() -> File:
-    return File(path="static/favicon.ico")
+    return File(path=f"{STATIC_DIR}/favicon.ico")
 
 # App Init
 app = Litestar(
     route_handlers=[index, chat_page, sse_handler, send_message, upload_file, download_file, browse_files, user_download_file, favicon],
     template_config=TemplateConfig(
-        directory="static",
+        directory=STATIC_DIR,
         engine=JinjaTemplateEngine,
     ),
     static_files_config=[
-        StaticFilesConfig(directories=["static"], path="/static", name="static"),
+        StaticFilesConfig(directories=[STATIC_DIR], path="/static", name="static"),
     ],
     request_max_body_size=20 * 1024 * 1024 * 1024, # 20GB Limit
     debug=True
